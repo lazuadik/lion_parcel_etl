@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  # --- Database Sumber (OLTP) ---
+  postgres_source:
+    image: postgres:13
+    container_name: postgres_source
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=dhika_user
+      - POSTGRES_PASSWORD=dhika_pass
+      - POSTGRES_DB=lion_parcel_db
+    ports:
+      - "5433:5432"
+
+  # --- Database Internal Airflow ---
+  postgres_airflow:
+    image: postgres:13
+    container_name: postgres_airflow
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+
+  # --- Airflow Init (Menyiapkan Database) ---
+  airflow-init:
+    image: apache/airflow:2.7.1
+    depends_on:
+      - postgres_airflow
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres_airflow/airflow
+    # Menginisialisasi user admin otomatis
+    command: >
+      bash -c "airflow db init &&
+      airflow users create --username airflow --password airflow --firstname Andhika --lastname Rafi --role Admin --email admin@example.com"
+
+  # --- Airflow Webserver ---
+  airflow-webserver:
+    image: apache/airflow:2.7.1
+    container_name: airflow_webserver
+    restart: always
+    depends_on:
+      - postgres_airflow
+      - airflow-init
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres_airflow/airflow
+      - _PIP_ADDITIONAL_REQUIREMENTS=opencv-python-headless fastapi uvicorn openai requests
+    ports:
+      - "8080:8080"
+      - "8000:8000"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./gcp-key.json:/opt/airflow/gcp-key.json
+    command: webserver
+
+  # --- Airflow Scheduler ---
+  airflow-scheduler:
+    image: apache/airflow:2.7.1
+    container_name: airflow_scheduler
+    restart: always
+    depends_on:
+      - postgres_airflow
+      - airflow-init
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres_airflow/airflow
+      - _PIP_ADDITIONAL_REQUIREMENTS=opencv-python-headless fastapi uvicorn openai requests
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./gcp-key.json:/opt/airflow/gcp-key.json
+    command: scheduler
+  
+  # --- blur detection ---
+  blur-detection-api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./plugins:/app/plugins
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
